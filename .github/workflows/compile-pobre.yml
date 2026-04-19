@@ -1,0 +1,98 @@
+name: Compilar Zen en Nube (Linux x86_64)
+
+on:
+  workflow_dispatch: # Activa el botón manual
+
+jobs:
+  build-linux:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest 
+
+    steps:
+      - name: Liberar espacio en disco (Vital para el runner gratuito)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar dependencias del sistema
+        run: |
+          sudo apt-get update --fix-missing
+          sudo apt-get install -y python3 python3-pip dos2unix yasm nasm build-essential libgtk2.0-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev libdbus-1-dev libdrm-dev libdbus-glib-1-dev libgtk-3-dev libpulse-dev libx11-xcb-dev libxt-dev xvfb lld llvm
+
+      - name: Instalar dependencias de npm
+        run: npm ci
+
+      - name: Configurar flags para sobrevivir con 7GB de RAM
+        run: |
+          echo "ac_add_options --disable-lto" > mozconfig
+          echo "mk_add_options MOZ_MAKE_FLAGS=\"-j2\"" >> mozconfig
+          echo "export MOZCONFIG=\$(pwd)/mozconfig" >> $GITHUB_ENV
+
+      - name: Configurar Surfer CI
+        run: npm run surfer -- ci --brand twilight --display-version "nube-test"
+
+      - name: Descargar motor y dependencias
+        run: npm run download
+
+      - name: Arreglar versión de Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(cat .rust-toolchain)
+          source $HOME/.cargo/env
+          rustup target add x86_64-unknown-linux-gnu
+
+      - name: Importar código
+        env:
+          SURFER_COMPAT: x86_64
+        run: |
+          . "$HOME/.cargo/env"
+          npm run import
+
+      - name: Descargar paquetes de idiomas
+        run: sh scripts/download-language-packs.sh
+
+      - name: Bootstrap
+        run: |
+          cd engine
+          export SURFER_PLATFORM="linux"
+          ./mach --no-interactive bootstrap --application-choice browser
+          cd ..
+
+      - name: Insertar llaves falsas (Mock API Keys)
+        run: |
+          mkdir -p ~/.zen-keys
+          echo "dummy-key" > ~/.zen-keys/safebrowsing.dat
+
+      - name: Compilar (Build)
+        env:
+          SURFER_COMPAT: x86_64
+          ZEN_RELEASE_BRANCH: twilight
+        run: |
+          export SURFER_PLATFORM="linux"
+          bash .github/workflows/src/release-build.sh
+
+      - name: Empaquetar
+        env:
+          SURFER_COMPAT: x86_64
+          ZEN_GA_DISABLE_PGO: true
+        run: |
+          export SURFER_PLATFORM="linux"
+          export ZEN_RELEASE=1
+          npm run package
+
+      - name: Subir ejecutable compilado
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 5
+          name: zen-browser-linux-compilado
+          path: dist/zen-*.tar.xz
