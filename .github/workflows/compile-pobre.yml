@@ -1,4 +1,4 @@
-name: Compilar Zen (Basado en Docs)
+name: Compilar Zen (Basado en Docs + CI Original)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Liberar espacio en disco
+      - name: Liberar espacio en disco (Evita errores de almacenamiento)
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
@@ -18,20 +18,27 @@ jobs:
           fetch-depth: 10
           submodules: recursive
 
-      - name: Instalar Node.js 21
+      - name: Configurar Node.js (v20 estándar de Zen)
         uses: actions/setup-node@v4
         with:
-          node-version: '21'
+          node-version: '20'
 
-      - name: Instalar Rust y Cargo
+      - name: Configurar usuario global de Git (Previene errores de parches)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Configurar Rust y arquitectura
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup target add x86_64-unknown-linux-gnu
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Instalar dependencias del sistema
+      - name: Instalar dependencias del sistema y compiladores (Lista completa)
         run: |
-          sudo apt update
-          sudo apt install -y curl python3 python3-pip git sccache clang lld llvm build-essential libgtk-3-dev libdbus-glib-1-dev libx11-xcb-dev libxt-dev
+          sudo apt-get update --fix-missing
+          sudo apt-get install -y curl python3 python3-pip dos2unix yasm nasm build-essential libgtk2.0-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev libdbus-1-dev libdrm-dev libdbus-glib-1-dev libgtk-3-dev libpulse-dev libx11-xcb-dev libxt-dev xvfb lld llvm clang sccache
 
       - name: Inyectar límites de RAM (mozconfig)
         run: |
@@ -40,37 +47,39 @@ jobs:
           echo "export MOZCONFIG=\$(pwd)/mozconfig" >> $GITHUB_ENV
 
       - name: Instalar dependencias NPM
-        run: npm i
+        run: npm ci
 
-      # --- INICIO DEL DESGLOSE DE "npm run init" ---
-      - name: Descargar el motor
+      - name: 1. Descargar el motor de Firefox
         run: npm run download
 
-      - name: Importar parches de Zen
-        run: npm run import
-
-      - name: Reparar Git en el motor (Commit fantasma)
-        # Ahora sí, la carpeta 'engine' ya existe gracias al paso anterior
+      - name: 1.5. Inyectar Commit Inicial (Engaña a mach y a git)
+        # Se ejecuta justo después de descargar para que "import" y "bootstrap" 
+        # encuentren un repositorio válido con historial.
         run: |
           cd engine
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit --allow-empty -m "Commit fantasma para engañar a mach"
+          git commit --allow-empty -m "Commit fantasma inicial" || true
 
-      - name: Inicializar entorno (Bootstrap manual)
+      - name: 2. Importar parches de Zen Browser
+        env:
+          SURFER_COMPAT: x86_64
+        run: npm run import
+
+      - name: 3. Inicializar entorno de Mozilla (Bootstrap)
         run: |
           cd engine
           export SURFER_PLATFORM="linux"
           ./mach --no-interactive bootstrap --application-choice browser
-      # --- FIN DEL DESGLOSE ---
 
-      - name: Actualizar paquetes de idioma
+      - name: 4. Actualizar paquetes de idioma
         run: python3 ./scripts/update_en_US_packs.py
 
-      - name: Compilar el navegador (npm run build)
+      - name: 5. Compilar el navegador
+        env:
+          SURFER_COMPAT: x86_64
+          SURFER_PLATFORM: linux
         run: npm run build
 
-      - name: Subir ejecutables compilados
+      - name: 6. Subir ejecutables compilados
         uses: actions/upload-artifact@v4
         with:
           retention-days: 5
