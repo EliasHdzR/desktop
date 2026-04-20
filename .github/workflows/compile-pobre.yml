@@ -1,98 +1,73 @@
-name: Compilar Zen en Nube (Linux x86_64)
+name: Compilar Zen (Basado en Docs)
 
 on:
-  workflow_dispatch: # Activa el botón manual
+  workflow_dispatch:
 
 jobs:
-  build-linux:
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest 
-
+  build:
+    runs-on: ubuntu-latest
     steps:
-      - name: Liberar espacio en disco (Vital para el runner gratuito)
+      # 1. Liberar espacio (Los runners gratuitos de GitHub tienen disco pequeño)
+      - name: Liberar espacio en disco
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
 
-      - name: Clonar repositorio
+      # 2. Equivalente a: git clone ... --depth 10 y cd desktop
+      - name: Clonar el repositorio
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 10
+          submodules: recursive # Clona los submódulos necesarios
 
-      - name: Configurar Node.js
+      # 3. Requisito: Node.js 21
+      - name: Instalar Node.js 21
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '21'
 
+      # 4. Requisito: Rust y Cargo
+      - name: Instalar Rust y Cargo
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      # 5. Equivalente a: sudo apt update && sudo apt install ...
       - name: Instalar dependencias del sistema
         run: |
-          sudo apt-get update --fix-missing
-          sudo apt-get install -y python3 python3-pip dos2unix yasm nasm build-essential libgtk2.0-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev libdbus-1-dev libdrm-dev libdbus-glib-1-dev libgtk-3-dev libpulse-dev libx11-xcb-dev libxt-dev xvfb lld llvm
+          sudo apt update
+          sudo apt install -y curl python3 python3-pip git sccache
 
-      - name: Instalar dependencias de npm
-        run: npm ci
-
-      - name: Configurar flags para sobrevivir con 7GB de RAM
+      # EXTRA VITAL PARA GITHUB ACTIONS: El salvavidas de RAM
+      # La documentación asume que tienes una PC normal. El runner de GitHub 
+      # solo tiene 7GB, así que inyectamos esto para que no colapse al final.
+      - name: Inyectar límites de RAM (mozconfig)
         run: |
           echo "ac_add_options --disable-lto" > mozconfig
           echo "mk_add_options MOZ_MAKE_FLAGS=\"-j2\"" >> mozconfig
           echo "export MOZCONFIG=\$(pwd)/mozconfig" >> $GITHUB_ENV
 
-      - name: Configurar Surfer CI
-        run: npm run surfer -- ci --brand twilight --display-version "nube-test"
+      # 6. Equivalente a: npm i
+      - name: Instalar dependencias NPM (npm i)
+        run: npm i
 
-      - name: Descargar motor y dependencias
-        run: npm run download
+      # 7. Equivalente a: npm run init
+      - name: Inicializar el entorno (npm run init)
+        run: npm run init
 
-      - name: Arreglar versión de Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(cat .rust-toolchain)
-          source $HOME/.cargo/env
-          rustup target add x86_64-unknown-linux-gnu
+      # 8. Equivalente a: python3 ./scripts/update_en_US_packs.py
+      - name: Actualizar paquetes de idioma
+        run: python3 ./scripts/update_en_US_packs.py
 
-      - name: Importar código
-        env:
-          SURFER_COMPAT: x86_64
-        run: |
-          . "$HOME/.cargo/env"
-          npm run import
+      # 9. Equivalente a: npm run build
+      - name: Compilar el navegador (npm run build)
+        run: npm run build
 
-      - name: Descargar paquetes de idiomas
-        run: sh scripts/download-language-packs.sh
-
-      - name: Bootstrap
-        run: |
-          cd engine
-          export SURFER_PLATFORM="linux"
-          ./mach --no-interactive bootstrap --application-choice browser
-          cd ..
-
-      - name: Insertar llaves falsas (Mock API Keys)
-        run: |
-          mkdir -p ~/.zen-keys
-          echo "dummy-key" > ~/.zen-keys/safebrowsing.dat
-
-      - name: Compilar (Build)
-        env:
-          SURFER_COMPAT: x86_64
-          ZEN_RELEASE_BRANCH: twilight
-        run: |
-          export SURFER_PLATFORM="linux"
-          bash .github/workflows/src/release-build.sh
-
-      - name: Empaquetar
-        env:
-          SURFER_COMPAT: x86_64
-          ZEN_GA_DISABLE_PGO: true
-        run: |
-          export SURFER_PLATFORM="linux"
-          export ZEN_RELEASE=1
-          npm run package
-
-      - name: Subir ejecutable compilado
+      # 10. Extraer el resultado
+      # La compilación pura deja los binarios en la carpeta 'obj-...'
+      - name: Subir ejecutables compilados
         uses: actions/upload-artifact@v4
         with:
           retention-days: 5
-          name: zen-browser-linux-compilado
-          path: dist/zen-*.tar.xz
+          name: zen-browser-binarios
+          path: engine/obj-*/dist/bin/
