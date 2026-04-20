@@ -7,64 +7,61 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 1. Liberar espacio (Los runners gratuitos de GitHub tienen disco pequeño)
       - name: Liberar espacio en disco
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
 
-      # 2. Equivalente a: git clone ... --depth 10 y cd desktop
       - name: Clonar el repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 10
-          submodules: recursive # Clona los submódulos necesarios
+          submodules: recursive
 
-      # 3. Requisito: Node.js 21
       - name: Instalar Node.js 21
         uses: actions/setup-node@v4
         with:
           node-version: '21'
 
-      # 4. Requisito: Rust y Cargo
       - name: Instalar Rust y Cargo
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      # 5. Equivalente a: sudo apt update && sudo apt install ...
       - name: Instalar dependencias del sistema
+        # AQUÍ ESTÁ LA MAGIA 1: Agregamos clang, lld, llvm y las librerías de Linux 
+        # que la documentación asume erróneamente que ya tienes instaladas.
         run: |
           sudo apt update
-          sudo apt install -y curl python3 python3-pip git sccache
+          sudo apt install -y curl python3 python3-pip git sccache clang lld llvm build-essential libgtk-3-dev libdbus-glib-1-dev libx11-xcb-dev libxt-dev
 
-      # EXTRA VITAL PARA GITHUB ACTIONS: El salvavidas de RAM
-      # La documentación asume que tienes una PC normal. El runner de GitHub 
-      # solo tiene 7GB, así que inyectamos esto para que no colapse al final.
       - name: Inyectar límites de RAM (mozconfig)
         run: |
           echo "ac_add_options --disable-lto" > mozconfig
           echo "mk_add_options MOZ_MAKE_FLAGS=\"-j2\"" >> mozconfig
           echo "export MOZCONFIG=\$(pwd)/mozconfig" >> $GITHUB_ENV
 
-      # 6. Equivalente a: npm i
       - name: Instalar dependencias NPM (npm i)
         run: npm i
 
-      # 7. Equivalente a: npm run init
+      - name: Reparar Git en el motor (Commit fantasma)
+        # AQUÍ ESTÁ LA MAGIA 2: Evita que "npm run init" y "mach bootstrap" se estrellen
+        run: |
+          cd engine
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "Commit fantasma para engañar a mach"
+          cd ..
+
       - name: Inicializar el entorno (npm run init)
         run: npm run init
 
-      # 8. Equivalente a: python3 ./scripts/update_en_US_packs.py
       - name: Actualizar paquetes de idioma
         run: python3 ./scripts/update_en_US_packs.py
 
-      # 9. Equivalente a: npm run build
       - name: Compilar el navegador (npm run build)
         run: npm run build
 
-      # 10. Extraer el resultado
-      # La compilación pura deja los binarios en la carpeta 'obj-...'
       - name: Subir ejecutables compilados
         uses: actions/upload-artifact@v4
         with:
