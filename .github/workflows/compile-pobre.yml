@@ -29,8 +29,6 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Instalar dependencias del sistema
-        # AQUÍ ESTÁ LA MAGIA 1: Agregamos clang, lld, llvm y las librerías de Linux 
-        # que la documentación asume erróneamente que ya tienes instaladas.
         run: |
           sudo apt update
           sudo apt install -y curl python3 python3-pip git sccache clang lld llvm build-essential libgtk-3-dev libdbus-glib-1-dev libx11-xcb-dev libxt-dev
@@ -41,20 +39,30 @@ jobs:
           echo "mk_add_options MOZ_MAKE_FLAGS=\"-j2\"" >> mozconfig
           echo "export MOZCONFIG=\$(pwd)/mozconfig" >> $GITHUB_ENV
 
-      - name: Instalar dependencias NPM (npm i)
+      - name: Instalar dependencias NPM
         run: npm i
 
+      # --- INICIO DEL DESGLOSE DE "npm run init" ---
+      - name: Descargar el motor
+        run: npm run download
+
+      - name: Importar parches de Zen
+        run: npm run import
+
       - name: Reparar Git en el motor (Commit fantasma)
-        # AQUÍ ESTÁ LA MAGIA 2: Evita que "npm run init" y "mach bootstrap" se estrellen
+        # Ahora sí, la carpeta 'engine' ya existe gracias al paso anterior
         run: |
           cd engine
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit --allow-empty -m "Commit fantasma para engañar a mach"
-          cd ..
 
-      - name: Inicializar el entorno (npm run init)
-        run: npm run init
+      - name: Inicializar entorno (Bootstrap manual)
+        run: |
+          cd engine
+          export SURFER_PLATFORM="linux"
+          ./mach --no-interactive bootstrap --application-choice browser
+      # --- FIN DEL DESGLOSE ---
 
       - name: Actualizar paquetes de idioma
         run: python3 ./scripts/update_en_US_packs.py
